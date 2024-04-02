@@ -103,7 +103,7 @@ class TrainingArguments(transformers.TrainingArguments):
         metadata={"help": "How many bits to use."}
     )
     lora_enable: bool = False
-    lora_r: int = 64
+    lora_r: int = 64  #TODO: --lora_r 128 --lora_alpha 256 --mm_projector_lr 2e-5
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_weight_path: str = ""
@@ -319,8 +319,11 @@ def preprocess_multimodal(
                 sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
                 sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
                 sentence['value'] = sentence['value'].strip()
+                # our conversation.version is conv_vicuna_v1 withNO "mmtag"
                 if "mmtag" in conversation_lib.default_conversation.version:
                     sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '<Image>' + DEFAULT_IMAGE_TOKEN + '</Image>')
+            
+            #TODO: we can overlook these 4 lines
             replace_token = DEFAULT_IMAGE_TOKEN
             if data_args.mm_use_im_start_end:
                 replace_token = DEFAULT_IM_START_TOKEN + replace_token + DEFAULT_IM_END_TOKEN
@@ -698,6 +701,11 @@ class LazySupervisedDataset(Dataset):
             image_folder = self.data_args.image_folder
             processor = self.data_args.image_processor
             
+            # previously
+            # image_file = self.list_data_dict[i]['image']
+            # image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+
+
             #TODO: six images at once: front/front left/front right/back/back left/back right cameres as defined in nuScenes
             image_files_all = self.list_data_dict[i]['image']
             for img_path in image_files_all:
@@ -718,14 +726,10 @@ class LazySupervisedDataset(Dataset):
                     else:
                         result = Image.new(pil_img.mode, (height, height), background_color)
                         result.paste(pil_img, ((height - width) // 2, 0))
-                        return result
-                
+                        return result    
                 for i in range(len(image_files_all)):
                     image_files_all[i] = expand2square(image_files_all[i], tuple(int(x*255) for x in processor.image_mean))
-                    image_files_all[i] = processor.preprocess(image_files_all[i], return_tensors='pt')['pixel_values'][0]
-
-                
-                
+                    image_files_all[i] = processor.preprocess(image_files_all[i], return_tensors='pt')['pixel_values'][0]             
                 
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
@@ -737,6 +741,7 @@ class LazySupervisedDataset(Dataset):
         
         image = torch.stack(image_files_all)
         
+        #TODO: To be comprehended
         data_dict = preprocess(
             sources,
             self.tokenizer,
@@ -757,7 +762,7 @@ class LazySupervisedDataset(Dataset):
         return data_dict
 
 
-@dataclass
+@dataclass   
 class DataCollatorForSupervisedDataset(object):
     """Collate examples for supervised fine-tuning."""
 
@@ -831,7 +836,8 @@ def train(attn_implementation=None):
                 bnb_4bit_quant_type=training_args.quant_type # {'fp4', 'nf4'}
             )
         ))
-
+    
+    #TODO:     --vision_tower openai/clip-vit-large-patch14-336 \
     if model_args.vision_tower is not None:
         #TODO: --model_name_or_path liuhaotian/llava-v1.5-13b \
         if 'mpt' in model_args.model_name_or_path:
@@ -859,6 +865,7 @@ def train(attn_implementation=None):
             torch_dtype=(torch.bfloat16 if training_args.bf16 else None),
             **bnb_model_from_pretrained_args
         )
+    
     model.config.use_cache = False
 
     if model_args.freeze_backbone:
@@ -869,7 +876,7 @@ def train(attn_implementation=None):
         model.config.torch_dtype=(torch.float32 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=training_args.gradient_checkpointing)
 
-    if training_args.gradient_checkpointing:
+    if training_args.gradient_checkpointing: #TODO: True
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
         else:
@@ -895,6 +902,7 @@ def train(attn_implementation=None):
         rank0_print("Adding LoRA adapters...")
         model = get_peft_model(model, lora_config)
 
+    #TODO:     --model_name_or_path liuhaotian/llava-v1.5-13b \
     if 'mpt' in model_args.model_name_or_path:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_args.model_name_or_path,
@@ -923,8 +931,9 @@ def train(attn_implementation=None):
         tokenizer.pad_token = tokenizer.unk_token
     else:
         tokenizer.pad_token = tokenizer.unk_token
+        # model_args.version "v1": conv_vicuna_v1,
         if model_args.version in conversation_lib.conv_templates:
-            conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
+            conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version] #conversation_lib.default_conversation = conv_vicuna_v1
         else:
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
 
