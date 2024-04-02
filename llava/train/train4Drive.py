@@ -73,7 +73,7 @@ class DataArguments:
     lazy_preprocess: bool = False
     is_multimodal: bool = False
     image_folder: Optional[str] = field(default=None)
-    image_aspect_ratio: str = 'square'
+    image_aspect_ratio: str = 'square' #TODO: we use "pad"
 
 
 @dataclass
@@ -695,10 +695,17 @@ class LazySupervisedDataset(Dataset):
             sources = [sources]
         assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
         if 'image' in sources[0]:
-            image_file = self.list_data_dict[i]['image']
             image_folder = self.data_args.image_folder
             processor = self.data_args.image_processor
-            image = Image.open(os.path.join(image_folder, image_file)).convert('RGB')
+            
+            #TODO: six images at once: front/front left/front right/back/back left/back right cameres as defined in nuScenes
+            image_files_all = self.list_data_dict[i]['image']
+            for img_path in image_files_all:
+                imag = Image.open(os.path.join(image_folder, img_path)).convert('RGB')
+                image_files_all.append(imag)
+            
+            
+            #TODO: we use image_aspect_ratio=="pad"
             if self.data_args.image_aspect_ratio == 'pad':
                 def expand2square(pil_img, background_color):
                     width, height = pil_img.size
@@ -712,8 +719,14 @@ class LazySupervisedDataset(Dataset):
                         result = Image.new(pil_img.mode, (height, height), background_color)
                         result.paste(pil_img, ((height - width) // 2, 0))
                         return result
-                image = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
-                image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
+                
+                for i in range(len(image_files_all)):
+                    image_files_all[i] = expand2square(image_files_all[i], tuple(int(x*255) for x in processor.image_mean))
+                    image_files_all[i] = processor.preprocess(image_files_all[i], return_tensors='pt')['pixel_values'][0]
+
+                
+                
+                
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             sources = preprocess_multimodal(
@@ -721,10 +734,15 @@ class LazySupervisedDataset(Dataset):
                 self.data_args)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
+        
+        image = torch.stack(image_files_all)
+        
         data_dict = preprocess(
             sources,
             self.tokenizer,
             has_image=('image' in self.list_data_dict[i]))
+        
+        
         if isinstance(i, int):
             data_dict = dict(input_ids=data_dict["input_ids"][0],
                              labels=data_dict["labels"][0])
@@ -786,6 +804,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
 
 
 def train(attn_implementation=None):
+    #TODO: attn_implementation="flash_attention_2"
     global local_rank
 
     parser = transformers.HfArgumentParser(
@@ -814,6 +833,7 @@ def train(attn_implementation=None):
         ))
 
     if model_args.vision_tower is not None:
+        #TODO: --model_name_or_path liuhaotian/llava-v1.5-13b \
         if 'mpt' in model_args.model_name_or_path:
             config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
             config.attn_config['attn_impl'] = training_args.mpt_attn_impl
@@ -891,6 +911,7 @@ def train(attn_implementation=None):
             use_fast=False,
         )
 
+    #TODO: model_args.version = v1
     if model_args.version == "v0":
         if tokenizer.pad_token is None:
             smart_tokenizer_and_embedding_resize(
@@ -907,6 +928,7 @@ def train(attn_implementation=None):
         else:
             conversation_lib.default_conversation = conversation_lib.conv_templates["vicuna_v1"]
 
+    #TODO: vision_tower openai/clip-vit-large-patch14-336
     if model_args.vision_tower is not None:
         model.get_model().initialize_vision_modules(
             model_args=model_args,
