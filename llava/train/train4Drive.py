@@ -679,7 +679,8 @@ class LazySupervisedDataset(Dataset):
     def lengths(self):
         length_list = []
         for sample in self.list_data_dict:
-            img_tokens = 128 if 'image' in sample else 0
+            #FIXME: perhaps 128*6
+            img_tokens = 128  if 'image' in sample else 0
             length_list.append(sum(len(conv['value'].split()) for conv in sample['conversations']) + img_tokens)
         return length_list
 
@@ -694,9 +695,10 @@ class LazySupervisedDataset(Dataset):
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
         sources = self.list_data_dict[i]
+        cur_id = self.list_data_dict[i]["id"]
         if isinstance(i, int):
             sources = [sources]
-        assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
+        # assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
         if 'image' in sources[0]:
             image_folder = self.data_args.image_folder
             processor = self.data_args.image_processor
@@ -708,9 +710,10 @@ class LazySupervisedDataset(Dataset):
 
             #TODO: six images at once: front/front left/front right/back/back left/back right cameres as defined in nuScenes
             image_files_all = self.list_data_dict[i]['image']
+            img_all = []
             for img_path in image_files_all:
                 imag = Image.open(os.path.join(image_folder, img_path)).convert('RGB')
-                image_files_all.append(imag)
+                img_all.append(imag)
             
             
             #TODO: we use image_aspect_ratio=="pad"
@@ -727,9 +730,9 @@ class LazySupervisedDataset(Dataset):
                         result = Image.new(pil_img.mode, (height, height), background_color)
                         result.paste(pil_img, ((height - width) // 2, 0))
                         return result    
-                for i in range(len(image_files_all)):
-                    image_files_all[i] = expand2square(image_files_all[i], tuple(int(x*255) for x in processor.image_mean))
-                    image_files_all[i] = processor.preprocess(image_files_all[i], return_tensors='pt')['pixel_values'][0]             
+                for i in range(len(img_all)):
+                    img_all[i] = expand2square(img_all[i], tuple(int(x*255) for x in processor.image_mean))
+                    img_all[i] = processor.preprocess(img_all[i], return_tensors='pt')['pixel_values'][0]             
                 
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
@@ -739,7 +742,7 @@ class LazySupervisedDataset(Dataset):
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
         
-        image = torch.stack(image_files_all)
+        image = torch.stack(img_all)
         
         #TODO: To be comprehended
         data_dict = preprocess(
